@@ -1,0 +1,165 @@
+---
+title: "Human Activity Project"
+output: html_document
+---
+
+The objective of this work is to process the data available at <http://groupware.les.inf.puc-rio.br/har> and provide the steps performed to train and predict the activity being executed by people.
+
+The dataset is comprised of 19,622 observations and 160 variables.
+
+```{r, eval=TRUE}
+library(caret)
+library(dplyr)
+library(doParallel)
+library(pROC)
+
+
+set.seed(123)
+registerDoParallel(cores = 4)
+
+train <- read.csv('pml-training.csv')
+test <- read.csv('pml-testing.csv')
+
+test$classe <- NA
+test$set <- "Test"
+test$problem_id <- NULL
+train$set <- "Train"
+full_set <- rbind(train, test)
+
+full_set$classe <- factor(full_set$classe)
+
+```
+
+We load both train and test sets above and combined them together. In order to split them again, we created the column "set".
+
+First of all, most of the data is missing. We can notice that some lines (those that ends the collection for each window of time) do have fields filled in but we are going to drop them since those data are derived from previous observations.
+
+```{r, eval=TRUE}
+dataToDrop <- list()
+j <- 0
+for (i in names(full_set)) {
+  if (!is.numeric(full_set[[i]]) | sum(is.na(full_set[[i]]))>0) { ## drop fields with NAs and fields that aren't numeric
+    if (j<159) { ## hold classe and set attributes
+      dataToDrop[j] <- i      
+    }
+  }
+  j <- j + 1
+}
+
+
+data_set <- full_set[, -which(names(full_set) %in% dataToDrop)]
+## drop X field, since it is just an index of the row
+data_set$X <- NULL
+
+## drop timestamp and num_window fields. 
+data_set <- select(data_set, -num_window, -raw_timestamp_part_1, -raw_timestamp_part_2)
+
+```
+
+In order to proper evaluate the data set and avoid overfit in entire set, we split the training set into training and cross-validation set (60%/40%)
+
+```{r, eval=TRUE}
+index_set <- createDataPartition(data_set[data_set$set=="Train",]$classe, p=0.6, list=F)
+
+```
+
+We ended up with 54 variables after dropping unecessary columns. Now we are going to apply PCA in the remaining features and try to reduce them while maintaining 99% of the variance of the original data. PCA gave us 38 features which is very good.
+
+
+```{r, eval=TRUE}
+prep <- preProcess(select(filter(data_set, set=="Train"), -set, -classe)[index_set,], 
+                   method=c("center","scale", "pca"), thresh=0.99)
+
+prepTrain <- predict(prep, select(filter(data_set, set=="Train")[index_set,], -set, -classe))
+prepCv <- predict(prep, select(filter(data_set, set=="Train")[-index_set,], -set, -classe))
+prepTest <- predict(prep, select(filter(data_set, set=="Test"), -set, -classe))
+
+```
+
+In the command above, besides applying PCA we normalized and centered the data.
+Now let's move on to the modeling stage.
+
+First, we will set up the cross validation.
+```{r, eval=TRUE}
+prep <- preProcess(select(filter(data_set, set=="Train"), -set, -classe)[index_set,], 
+                   method=c("center","scale", "pca"), thresh=0.99)
+```
+
+And then we will choose two distinct models. Random Forest is nice since it will resample the data and try to identify which variables are relevant to determine the label of the data by configuring a set of leafs and trees.
+The other one will be a SVM model. This one is linear while Random Forest is not so we can merge the results in order to achieve a better accuracy in the end if necessary.
+
+```{r, eval=TRUE}
+svmModel <- train(prepTrain, data_set[index_set,]$classe, method="svmRadial", trControl = cv)
+svmModel$results
+svmResultTrain <-  predict(svmModel, prepTrain)
+svmResultCv <-  predict(svmModel, prepCv)
+```
+
+This is the SVM Model Confusion Matrix:
+```{r, eval=TRUE}
+confusionMatrix(filter(data_set, set=="Train")[-index_set,]$classe, svmResultCv)
+roc(as.numeric(filter(data_set, set=="Train")[-index_set,]$classe), as.numeric(svmResultCv))
+```
+
+
+```{r, eval=TRUE}
+rfModel <- train(prepTrain, data_set[index_set,]$classe, method="rf", trControl = cv, ntree=300)
+rfModel$results
+rfResultTrain <-  predict(rfModel, prepTrain)
+rfResultCv <-  predict(rfModel, prepCv)
+```
+
+This is the Random Forest Model Confusion Matrix:
+```{r, eval=TRUE}
+confusionMatrix(filter(data_set, set=="Train")[-index_set,]$classe, rfResultCv)
+roc(as.numeric(filter(data_set, set=="Train")[-index_set,]$classe), as.numeric(rfResultCv))
+```
+
+
+Random Forest performs better than SVM because:
+- Better overall accuracy: 97.5% against 94%
+- Better AUC: 98.5% against 96%
+
+```{r, eval=TRUE}
+par(mfrow=c(1,2))
+plot(roc(as.numeric(filter(data_set, set=="Train")[-index_set,]$classe), 
+         as.numeric(svmResultCv)), main="SVM - AUC 96%")
+plot(roc(as.numeric(filter(data_set, set=="Train")[-index_set,]$classe), 
+         as.numeric(rfResultCv)), main="Random Forest - AUC 98.5%")
+```
+
+
+We tried to blend the models using logistic regression as we can see below:
+```{r, eval=TRUE}
+svmResult <- predict(svmModel, prepTest)
+rfResult <- predict(rfModel, prepTest)
+logTrain <- data.frame(svmResultTrain, rfResultTrain, prepTrain)
+logCv <- data.frame(svmResultTrain=svmResultCv, rfResultTrain=rfResultCv, prepCv)
+logTest <- data.frame(svmResultTrain=svmResult, rfResultTrain=rfResult, prepTest)
+logModel <- train(y=filter(data_set, set=="Train")[index_set,]$classe, x=logTrain, model="glm", family=binomial())
+logModel$results
+resultCv <- predict(logModel, logCv)
+```
+
+```{r, eval=TRUE}
+confusionMatrix(filter(data_set, set=="Train")[-index_set,]$classe, resultCv)
+roc(as.numeric(filter(data_set, set=="Train")[-index_set,]$classe), as.numeric(resultCv))
+```
+
+We can notice that the blended model didnt outperform Random Forest model in CV, but it was more accurate at predicting the original data (100% against 97.5%). All of the 3 models (SVM, Random Forest and Blended) generated the same correct result. So, the chosen models generalized pretty well and didn't overfit the training data.
+
+For blended model (and Random Forest), we have a 95% Confidence Interval for Accuracy: [97.43%, 98.1%]. This means that for this sample, the error for this model is in a 95% Confidence Interval of [1.9%, 2.57%].
+
+
+```{r, eval=FALSE}
+pml_write_files = function(x){
+  n = length(x)
+  for(i in 1:n){
+    filename = paste0("problem_id_",i,".txt")
+    write.table(x[i],file=filename,quote=FALSE,row.names=FALSE,col.names=FALSE)
+  }
+}
+
+pml_write_files(result)
+```
+
