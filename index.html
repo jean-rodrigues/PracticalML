@@ -57,40 +57,13 @@ if (window.hljs && document.readyState && document.readyState === "complete") {
 
 <p>The objective of this work is to process the data available at <a href="http://groupware.les.inf.puc-rio.br/har">http://groupware.les.inf.puc-rio.br/har</a> and provide the steps performed to train and predict the activity being executed by people.</p>
 <p>The dataset is comprised of 19,622 observations and 160 variables.</p>
-<pre class="r"><code>library(caret)</code></pre>
-<pre><code>## Warning: package 'caret' was built under R version 3.1.2</code></pre>
-<pre><code>## Loading required package: lattice
-## Loading required package: ggplot2</code></pre>
-<pre><code>## Warning: package 'ggplot2' was built under R version 3.1.2</code></pre>
-<pre class="r"><code>library(dplyr)</code></pre>
-<pre><code>## Warning: package 'dplyr' was built under R version 3.1.2</code></pre>
-<pre><code>## 
-## Attaching package: 'dplyr'
-## 
-## The following object is masked from 'package:stats':
-## 
-##     filter
-## 
-## The following objects are masked from 'package:base':
-## 
-##     intersect, setdiff, setequal, union</code></pre>
-<pre class="r"><code>library(doParallel)</code></pre>
-<pre><code>## Warning: package 'doParallel' was built under R version 3.1.2</code></pre>
-<pre><code>## Loading required package: foreach</code></pre>
-<pre><code>## Warning: package 'foreach' was built under R version 3.1.2</code></pre>
-<pre><code>## Loading required package: iterators</code></pre>
-<pre><code>## Warning: package 'iterators' was built under R version 3.1.2</code></pre>
-<pre><code>## Loading required package: parallel</code></pre>
-<pre class="r"><code>library(pROC)</code></pre>
-<pre><code>## Warning: package 'pROC' was built under R version 3.1.2</code></pre>
-<pre><code>## Type 'citation(&quot;pROC&quot;)' for a citation.
-## 
-## Attaching package: 'pROC'
-## 
-## The following objects are masked from 'package:stats':
-## 
-##     cov, smooth, var</code></pre>
-<pre class="r"><code>set.seed(123)
+<pre class="r"><code>library(caret)
+library(dplyr)
+library(doParallel)
+library(pROC)
+
+
+set.seed(123)
 registerDoParallel(cores = 4)
 
 train &lt;- read.csv('pml-training.csv')
@@ -123,9 +96,9 @@ data_set$X &lt;- NULL
 
 ## drop timestamp and num_window fields. 
 data_set &lt;- select(data_set, -num_window, -raw_timestamp_part_1, -raw_timestamp_part_2)</code></pre>
-<p>In order to proper evaluate the data set and avoid overfit in entire set, we split the training set into training and cross-validation set.</p>
+<p>In order to proper evaluate the data set and avoid overfit in entire set, we split the training set into training and cross-validation set (60%/40%)</p>
 <pre class="r"><code>index_set &lt;- createDataPartition(data_set[data_set$set==&quot;Train&quot;,]$classe, p=0.6, list=F)</code></pre>
-<p>We ended up with 54 variables after dropping unecessary columns. Now we are going to apply PCA in the remaining features and try to reduce them while maintaining 99% of the variance of the original data.</p>
+<p>We ended up with 54 variables after dropping unecessary columns. Now we are going to apply PCA in the remaining features and try to reduce them while maintaining 99% of the variance of the original data. PCA gave us 38 features which is very good.</p>
 <pre class="r"><code>prep &lt;- preProcess(select(filter(data_set, set==&quot;Train&quot;), -set, -classe)[index_set,], 
                    method=c(&quot;center&quot;,&quot;scale&quot;, &quot;pca&quot;), thresh=0.99)
 
@@ -140,6 +113,11 @@ prepTest &lt;- predict(prep, select(filter(data_set, set==&quot;Test&quot;), -se
 <pre class="r"><code>svmModel &lt;- train(prepTrain, data_set[index_set,]$classe, method=&quot;svmRadial&quot;, trControl = cv)</code></pre>
 <pre><code>## Loading required package: kernlab</code></pre>
 <pre><code>## Warning: package 'kernlab' was built under R version 3.1.2</code></pre>
+<pre class="r"><code>svmModel$results</code></pre>
+<pre><code>##        sigma    C  Accuracy     Kappa  AccuracySD    KappaSD
+## 1 0.01837632 0.25 0.8722815 0.8380627 0.008741926 0.01114836
+## 2 0.01837632 0.50 0.9031062 0.8771363 0.008922331 0.01138017
+## 3 0.01837632 1.00 0.9306191 0.9120741 0.008810095 0.01119014</code></pre>
 <pre class="r"><code>svmResultTrain &lt;-  predict(svmModel, prepTrain)
 svmResultCv &lt;-  predict(svmModel, prepCv)</code></pre>
 <p>This is the SVM Model Confusion Matrix:</p>
@@ -187,6 +165,11 @@ svmResultCv &lt;-  predict(svmModel, prepCv)</code></pre>
 <pre><code>## Warning: package 'randomForest' was built under R version 3.1.2</code></pre>
 <pre><code>## randomForest 4.6-10
 ## Type rfNews() to see new features/changes/bug fixes.</code></pre>
+<pre class="r"><code>rfModel$results</code></pre>
+<pre><code>##   mtry  Accuracy     Kappa  AccuracySD     KappaSD
+## 1    2 0.9729119 0.9657178 0.004493765 0.005681958
+## 2   19 0.9665414 0.9576596 0.003595193 0.004554369
+## 3   36 0.9553334 0.9434781 0.003322393 0.004191937</code></pre>
 <pre class="r"><code>rfResultTrain &lt;-  predict(rfModel, prepTrain)
 rfResultCv &lt;-  predict(rfModel, prepCv)</code></pre>
 <p>This is the Random Forest Model Confusion Matrix:</p>
@@ -255,7 +238,12 @@ logTrain &lt;- data.frame(svmResultTrain, rfResultTrain, prepTrain)
 logCv &lt;- data.frame(svmResultTrain=svmResultCv, rfResultTrain=rfResultCv, prepCv)
 logTest &lt;- data.frame(svmResultTrain=svmResult, rfResultTrain=rfResult, prepTest)
 logModel &lt;- train(y=filter(data_set, set==&quot;Train&quot;)[index_set,]$classe, x=logTrain, model=&quot;glm&quot;, family=binomial())
-resultCv &lt;- predict(logModel, logCv)</code></pre>
+logModel$results</code></pre>
+<pre><code>##   mtry  Accuracy     Kappa  AccuracySD     KappaSD
+## 1    2 0.9953919 0.9941704 0.001530599 0.001935136
+## 2   20 1.0000000 1.0000000 0.000000000 0.000000000
+## 3   38 1.0000000 1.0000000 0.000000000 0.000000000</code></pre>
+<pre class="r"><code>resultCv &lt;- predict(logModel, logCv)</code></pre>
 <pre class="r"><code>confusionMatrix(filter(data_set, set==&quot;Train&quot;)[-index_set,]$classe, resultCv)</code></pre>
 <pre><code>## Confusion Matrix and Statistics
 ## 
@@ -295,7 +283,8 @@ resultCv &lt;- predict(logModel, logCv)</code></pre>
 ## 
 ## Data: as.numeric(resultCv) in 2232 controls (as.numeric(filter(data_set, set == &quot;Train&quot;)[-index_set, ]$classe) 1) &lt; 1518 cases (as.numeric(filter(data_set, set == &quot;Train&quot;)[-index_set, ]$classe) 2).
 ## Area under the curve: 0.9854</code></pre>
-<p>We can notice that the blended model didnt outperform Random Forest model and we’ll drop it. All of the 3 models (SVM, Random Forest and Blended) generated the same correct result. So, the chosen models generalized pretty well and didn’t overfit the training data.</p>
+<p>We can notice that the blended model didnt outperform Random Forest model in CV, but it was more accurate at predicting the original data (100% against 97.5%). All of the 3 models (SVM, Random Forest and Blended) generated the same correct result. So, the chosen models generalized pretty well and didn’t overfit the training data.</p>
+<p>For blended model (and Random Forest), we have a 95% Confidence Interval for Accuracy: [97.43%, 98.1%]. This means that for this sample, the error for this model is in a 95% Confidence Interval of [1.9%, 2.57%].</p>
 <pre class="r"><code>pml_write_files = function(x){
   n = length(x)
   for(i in 1:n){
@@ -304,7 +293,7 @@ resultCv &lt;- predict(logModel, logCv)</code></pre>
   }
 }
 
-pml_write_files(rfResult) ## generate result with RF model</code></pre>
+pml_write_files(result)</code></pre>
 
 
 </div>
