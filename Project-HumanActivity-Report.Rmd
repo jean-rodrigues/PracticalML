@@ -7,7 +7,7 @@ The objective of this work is to process the data available at <http://groupware
 
 The dataset is comprised of 19,622 observations and 160 variables.
 
-```{r, eval=TRUE}
+```{r, eval=TRUE, message=F, warning=F}
 library(caret)
 library(dplyr)
 library(doParallel)
@@ -88,7 +88,7 @@ prep <- preProcess(select(filter(data_set, set=="Train"), -set, -classe)[index_s
 And then we will choose two distinct models. Random Forest is nice since it will resample the data and try to identify which variables are relevant to determine the label of the data by configuring a set of leafs and trees.
 The other one will be a SVM model. This one is linear while Random Forest is not so we can merge the results in order to achieve a better accuracy in the end if necessary.
 
-```{r, eval=TRUE}
+```{r, eval=TRUE, message=F, warning=F}
 svmModel <- train(prepTrain, data_set[index_set,]$classe, method="svmRadial", trControl = cv)
 svmModel$results
 svmResultTrain <-  predict(svmModel, prepTrain)

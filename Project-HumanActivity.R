@@ -84,4 +84,4 @@ confusionMatrix(filter(data_set, set=="Train")[-index_set,]$classe, resultCv)
 result <- predict(logModel, logTest)
 
 ## print rfResult. The 3 models output the same correct result.
-pml_write_files(rfResult)
+pml_write_files(result)
